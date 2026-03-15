@@ -106,15 +106,21 @@ def calcular_top_5_comunidad(comunidad):
     
     print(f"\n[{comunidad}] 1. Calculando las mejores olas (API Marina)...")
     
+    # Cabeceras para simular que somos un navegador web normal y evitar bloqueos de la API
+    cabeceras = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
+    }
+    
     for spot in lista_spots:
         # API Marina: Olas y Mareas
         url_marina = f"https://marine-api.open-meteo.com/v1/marine?latitude={spot['lat']}&longitude={spot['lon']}&hourly=wave_height,wave_period,sea_surface_temperature,wave_direction,sea_level&forecast_days=2&timezone=Europe/Berlin"
         
         try:
-            req = requests.get(url_marina, timeout=4)
-            if req.status_code != 200: continue
+            req = requests.get(url_marina, headers=cabeceras, timeout=5)
+            if req.status_code != 200: 
+                continue
+                
             datos_mar = req.json()
-            
             mejor_ola_spot = 0.0
             prevision_spot = []
             
@@ -130,15 +136,23 @@ def calcular_top_5_comunidad(comunidad):
                 dir_ola = grados_a_rosa(datos_mar["hourly"]["wave_direction"][i])
                 
                 # Gestión inteligente de la marea (si es null, pone "--")
-                marea_val = datos_mar["hourly"]["sea_level"][i]
-                marea = f"{marea_val:.2f}" if marea_val is not None else "--"
+                marea = "--"
+                if "sea_level" in datos_mar["hourly"] and datos_mar["hourly"]["sea_level"][i] is not None:
+                    marea = f"{datos_mar['hourly']['sea_level'][i]:.2f}"
+                
+                # Formatear la temperatura y el periodo para evitar fallos si hay nulls
+                temp = datos_mar["hourly"]["sea_surface_temperature"][i]
+                temp_str = f"{temp:.1f}" if temp is not None else "--"
+                
+                periodo = datos_mar["hourly"]["wave_period"][i]
+                periodo_str = f"{periodo:.1f}" if periodo is not None else "--"
                 
                 prevision_spot.append({
                     "fecha": f"{dia}/{mes}",
                     "hora": tiempo_crudo[11:16],
-                    "ola": ola,
-                    "periodo": datos_mar["hourly"]["wave_period"][i],
-                    "temp": datos_mar["hourly"]["sea_surface_temperature"][i],
+                    "ola": f"{ola:.1f}",
+                    "periodo": periodo_str,
+                    "temp": temp_str,
                     "dir_ola": dir_ola,
                     "marea": marea
                 })
@@ -152,6 +166,7 @@ def calcular_top_5_comunidad(comunidad):
             })
             
         except Exception as e:
+            print(f"  -> Timeout en {spot['nombre']}. Saltando.")
             pass
             
     # Ordenar y aislar el Top 5
@@ -166,7 +181,7 @@ def calcular_top_5_comunidad(comunidad):
         url_viento = f"https://api.open-meteo.com/v1/forecast?latitude={spot['lat']}&longitude={spot['lon']}&hourly=wind_speed_10m,wind_direction_10m&forecast_days=2&timezone=Europe/Berlin"
         
         try:
-            req_viento = requests.get(url_viento, timeout=4).json()
+            req_viento = requests.get(url_viento, headers=cabeceras, timeout=5).json()
             for i, p in enumerate(spot['prevision']):
                 idx_hora = hora_actual + i
                 vel_viento = req_viento["hourly"]["wind_speed_10m"][idx_hora]
@@ -174,8 +189,8 @@ def calcular_top_5_comunidad(comunidad):
                 
                 p['vel_viento'] = f"{vel_viento:.1f}" if vel_viento is not None else "--"
                 p['dir_viento'] = grados_a_rosa(dir_viento_grados)
-        except:
-            # Si falla la API del viento, no crasheamos
+        except Exception as e:
+            # Si falla la API del viento, rellenamos con guiones para no crashear el Arduino
             for p in spot['prevision']:
                 p['vel_viento'] = "--"
                 p['dir_viento'] = "--"
@@ -196,6 +211,8 @@ class Manejador(BaseHTTPRequestHandler):
         parsed_path = urlparse(self.path)
         query = parse_qs(parsed_path.query)
         region = query.get('region', ['Cantabria'])[0] 
+        
+        print(f"\n--> Petición entrante de Arduino: {region}")
         csv_data = calcular_top_5_comunidad(region)
         
         self.send_response(200)
