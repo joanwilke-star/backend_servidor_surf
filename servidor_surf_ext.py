@@ -104,88 +104,91 @@ def calcular_top_5_comunidad(comunidad):
     resultados = []
     lista_spots = spots_db.get(comunidad, spots_db["Cantabria"])
     
-    print(f"\n[{comunidad}] Calculando el Top 5...")
+    print(f"\n[{comunidad}] 1. Calculando las mejores olas (API Marina)...")
     
     for spot in lista_spots:
-        # URL 1: Intentamos conseguir absolutamente todo (Mareas incluidas)
-        url_completa = f"https://marine-api.open-meteo.com/v1/marine?latitude={spot['lat']}&longitude={spot['lon']}&hourly=wave_height,wave_period,sea_surface_temperature,wave_direction,sea_level&forecast_days=2&timezone=Europe/Berlin"
-        
-        # URL 2: El Plan B por si esta playa no tiene boyas de marea
-        url_segura = f"https://marine-api.open-meteo.com/v1/marine?latitude={spot['lat']}&longitude={spot['lon']}&hourly=wave_height,wave_period,sea_surface_temperature,wave_direction&forecast_days=2&timezone=Europe/Berlin"
+        # API Marina: Olas y Mareas
+        url_marina = f"https://marine-api.open-meteo.com/v1/marine?latitude={spot['lat']}&longitude={spot['lon']}&hourly=wave_height,wave_period,sea_surface_temperature,wave_direction,sea_level&forecast_days=2&timezone=Europe/Berlin"
         
         try:
-            # Pedimos los datos y cruzamos los dedos
-            req = requests.get(url_completa, timeout=3)
-            respuesta_json = {}
+            req = requests.get(url_marina, timeout=4)
+            if req.status_code != 200: continue
+            datos_mar = req.json()
             
-            # ¡Si Open-Meteo se enfada por la marea, activamos el Plan B!
-            if req.status_code != 200:
-                print(f"⚠️ Playa {spot['nombre']} sin datos de marea. Usando Plan B...")
-                req_b = requests.get(url_segura, timeout=3)
-                if req_b.status_code == 200:
-                    respuesta_json = req_b.json()
-                else:
-                    continue # Si falla hasta el Plan B, saltamos a la siguiente playa
-            else:
-                respuesta_json = req.json()
-
-            # --- PROCESAMOS LOS DATOS ---
             mejor_ola_spot = 0.0
             prevision_spot = []
             
             for i in range(hora_actual, hora_actual + 24):
-                ola = respuesta_json["hourly"]["wave_height"][i]
-                if ola is None: ola = 0.0 # Por si la API devuelve un vacío
-                if ola > mejor_ola_spot:
-                    mejor_ola_spot = ola
+                ola = datos_mar["hourly"]["wave_height"][i]
+                if ola is None: ola = 0.0
+                if ola > mejor_ola_spot: mejor_ola_spot = ola
                     
-                tiempo_crudo = respuesta_json["hourly"]["time"][i]
+                tiempo_crudo = datos_mar["hourly"]["time"][i]
                 dia = int(tiempo_crudo[8:10])
                 mes = int(tiempo_crudo[5:7])
                 
-                # Leemos la dirección con seguridad
-                dir_grados = respuesta_json["hourly"]["wave_direction"][i]
-                dir_texto = grados_a_rosa(dir_grados)
+                dir_ola = grados_a_rosa(datos_mar["hourly"]["wave_direction"][i])
                 
-                # Leemos la marea (o ponemos "--" si tuvimos que usar el Plan B)
-                marea = "--"
-                if "sea_level" in respuesta_json["hourly"]:
-                    dato_marea = respuesta_json["hourly"]["sea_level"][i]
-                    if dato_marea is not None:
-                        marea = f"{dato_marea:.2f}"
+                # Gestión inteligente de la marea (si es null, pone "--")
+                marea_val = datos_mar["hourly"]["sea_level"][i]
+                marea = f"{marea_val:.2f}" if marea_val is not None else "--"
                 
                 prevision_spot.append({
                     "fecha": f"{dia}/{mes}",
                     "hora": tiempo_crudo[11:16],
                     "ola": ola,
-                    "periodo": respuesta_json["hourly"]["wave_period"][i],
-                    "temp": respuesta_json["hourly"]["sea_surface_temperature"][i],
-                    "direccion": dir_texto,
+                    "periodo": datos_mar["hourly"]["wave_period"][i],
+                    "temp": datos_mar["hourly"]["sea_surface_temperature"][i],
+                    "dir_ola": dir_ola,
                     "marea": marea
                 })
                 
             resultados.append({
                 "nombre": spot["nombre"],
+                "lat": spot['lat'],
+                "lon": spot['lon'],
                 "max_ola": mejor_ola_spot,
                 "prevision": prevision_spot
             })
             
         except Exception as e:
-            print(f"  -> Timeout en {spot['nombre']}. Saltando.")
+            pass
             
-    # Ordenar y coger el Top 5
+    # Ordenar y aislar el Top 5
     resultados.sort(key=lambda x: x["max_ola"], reverse=True)
     top_5 = resultados[:5]
     
+    print(f"[{comunidad}] 2. Buscando Viento Real para el Top 5...")
+    
     csv_final = ""
     for index, spot in enumerate(top_5):
+        # API Meteorológica: ¡Solo pedimos el viento para los 5 ganadores!
+        url_viento = f"https://api.open-meteo.com/v1/forecast?latitude={spot['lat']}&longitude={spot['lon']}&hourly=wind_speed_10m,wind_direction_10m&forecast_days=2&timezone=Europe/Berlin"
+        
+        try:
+            req_viento = requests.get(url_viento, timeout=4).json()
+            for i, p in enumerate(spot['prevision']):
+                idx_hora = hora_actual + i
+                vel_viento = req_viento["hourly"]["wind_speed_10m"][idx_hora]
+                dir_viento_grados = req_viento["hourly"]["wind_direction_10m"][idx_hora]
+                
+                p['vel_viento'] = f"{vel_viento:.1f}" if vel_viento is not None else "--"
+                p['dir_viento'] = grados_a_rosa(dir_viento_grados)
+        except:
+            # Si falla la API del viento, no crasheamos
+            for p in spot['prevision']:
+                p['vel_viento'] = "--"
+                p['dir_viento'] = "--"
+
+        # Empaquetamos todo en el super-CSV para el Arduino (9 variables por línea)
         csv_final += f"{spot['nombre']}\n"
         for p in spot['prevision']:
-            csv_final += f"{p['fecha']},{p['hora']},{p['ola']},{p['periodo']},{p['temp']},{p['direccion']},{p['marea']}\n"
+            csv_final += f"{p['fecha']},{p['hora']},{p['ola']},{p['periodo']},{p['temp']},{p['dir_ola']},{p['vel_viento']},{p['dir_viento']},{p['marea']}\n"
+        
         if index < len(top_5) - 1:
             csv_final += "---\n" 
             
-    print(f"✅ Top 5 calculado con éxito.")
+    print(f"✅ ¡Top 5 completado y enviado!")
     return csv_final
 
 class Manejador(BaseHTTPRequestHandler):
@@ -193,8 +196,6 @@ class Manejador(BaseHTTPRequestHandler):
         parsed_path = urlparse(self.path)
         query = parse_qs(parsed_path.query)
         region = query.get('region', ['Cantabria'])[0] 
-        
-        print(f"\n--> Petición recibida: {region}")
         csv_data = calcular_top_5_comunidad(region)
         
         self.send_response(200)
@@ -205,7 +206,7 @@ class Manejador(BaseHTTPRequestHandler):
 if __name__ == '__main__':
     puerto = int(os.environ.get('PORT', 8080))
     print("="*50)
-    print(f"🌍 SERVIDOR ANTI-BALAS INICIADO EN PUERTO {puerto}")
+    print(f"🌍 SERVIDOR METEO-MARINO INICIADO EN PUERTO {puerto}")
     print("="*50)
     servidor = HTTPServer(('0.0.0.0', puerto), Manejador)
     servidor.serve_forever()
