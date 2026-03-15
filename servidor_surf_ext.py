@@ -93,6 +93,12 @@ spots_db = {
         {"nombre": "Playa Gris", "lat": 43.305, "lon": -2.235}
     ]
 }
+# Función para convertir grados (0-360) a puntos cardinales (N, NW, SE...)
+def grados_a_rosa(grados):
+    if grados is None: return "--"
+    direcciones = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW", "N"]
+    idx = int(round(grados / 22.5)) % 16
+    return direcciones[idx]
 
 def calcular_top_5_comunidad(comunidad):
     hora_actual = datetime.now().hour
@@ -101,7 +107,8 @@ def calcular_top_5_comunidad(comunidad):
     print(f"\n[{comunidad}] Calculando el Top 5 para las próximas 24h...")
     
     for spot in lista_spots:
-        url = f"https://marine-api.open-meteo.com/v1/marine?latitude={spot['lat']}&longitude={spot['lon']}&hourly=wave_height,wave_period,sea_surface_temperature&forecast_days=2&timezone=Europe/Berlin"
+        # AÑADIMOS 'wave_direction' Y 'sea_level' A LA URL
+        url = f"https://marine-api.open-meteo.com/v1/marine?latitude={spot['lat']}&longitude={spot['lon']}&hourly=wave_height,wave_period,sea_surface_temperature,wave_direction,sea_level&forecast_days=2&timezone=Europe/Berlin"
         exito = False
         intentos = 0
         
@@ -120,12 +127,19 @@ def calcular_top_5_comunidad(comunidad):
                     dia = int(tiempo_crudo[8:10])
                     mes = int(tiempo_crudo[5:7])
                     
+                    # Leemos los nuevos datos y los convertimos
+                    dir_grados = respuesta["hourly"]["wave_direction"][i]
+                    dir_texto = grados_a_rosa(dir_grados)
+                    marea = respuesta["hourly"]["sea_level"][i]
+                    
                     prevision_spot.append({
                         "fecha": f"{dia}/{mes}",
                         "hora": tiempo_crudo[11:16],
                         "ola": ola,
                         "periodo": respuesta["hourly"]["wave_period"][i],
-                        "temp": respuesta["hourly"]["sea_surface_temperature"][i]
+                        "temp": respuesta["hourly"]["sea_surface_temperature"][i],
+                        "direccion": dir_texto, # Nuevo
+                        "marea": marea          # Nuevo
                     })
                     
                 resultados.append({
@@ -149,7 +163,8 @@ def calcular_top_5_comunidad(comunidad):
     for index, spot in enumerate(top_5):
         csv_final += f"{spot['nombre']}\n"
         for p in spot['prevision']:
-            csv_final += f"{p['fecha']},{p['hora']},{p['ola']},{p['periodo']},{p['temp']}\n"
+            # AÑADIMOS LAS NUEVAS VARIABLES AL MENSAJE QUE VA AL ARDUINO
+            csv_final += f"{p['fecha']},{p['hora']},{p['ola']},{p['periodo']},{p['temp']},{p['direccion']},{p['marea']}\n"
         if index < len(top_5) - 1:
             csv_final += "---\n" 
             
