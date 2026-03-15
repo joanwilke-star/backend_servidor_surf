@@ -3,6 +3,7 @@ import requests
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime
+import concurrent.futures
 
 # --- SÚPER BASE DE DATOS DE SURF POR COMUNIDADES ---
 spots_db = {
@@ -60,111 +61,106 @@ spots_db = {
 def grados_a_rosa(grados):
     if grados is None: return "--"
     direcciones = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW", "N"]
-    idx = int(round(grados / 22.5)) % 16
-    return direcciones[idx]
+    return direcciones[int(round(grados / 22.5)) % 16]
+
+# Herramienta para buscar datos de una playa (se ejecuta en paralelo)
+def buscar_olas_spot(spot, cabeceras):
+    url = f"https://marine-api.open-meteo.com/v1/marine?latitude={spot['lat']}&longitude={spot['lon']}&hourly=wave_height,wave_period,sea_surface_temperature,wave_direction&forecast_days=2&timezone=Europe/Berlin"
+    try:
+        req = requests.get(url, headers=cabeceras, timeout=5)
+        if req.status_code == 200:
+            return {"spot": spot, "datos": req.json()}
+    except:
+        pass
+    return None
+
+def buscar_viento_spot(spot, cabeceras):
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={spot['lat']}&longitude={spot['lon']}&hourly=wind_speed_10m,wind_direction_10m&forecast_days=2&timezone=Europe/Berlin"
+    try:
+        req = requests.get(url, headers=cabeceras, timeout=5)
+        if req.status_code == 200:
+            return {"nombre": spot["nombre"], "datos": req.json()}
+    except:
+        pass
+    return {"nombre": spot["nombre"], "datos": None}
 
 def calcular_top_5_comunidad(comunidad):
     hora_actual = datetime.now().hour
     lista_spots = spots_db.get(comunidad, spots_db["Cantabria"])
+    cabeceras = {'User-Agent': 'Mozilla/5.0'}
     
-    cabeceras = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-    
-    print(f"\n[{comunidad}] 1. Calculando olas en MODO LOTE ULTRARRÁPIDO...")
-    
-    # Juntamos las 10 latitudes y las 10 longitudes en una sola cadena de texto
-    lats = ",".join([str(s['lat']) for s in lista_spots])
-    lons = ",".join([str(s['lon']) for s in lista_spots])
-    
-    # ¡1 SOLA PETICIÓN para las 10 playas a la vez!
-    url_marina = f"https://marine-api.open-meteo.com/v1/marine?latitude={lats}&longitude={lons}&hourly=wave_height,wave_period,sea_surface_temperature,wave_direction&forecast_days=2&timezone=Europe/Berlin"
-    
-    try:
-        req = requests.get(url_marina, headers=cabeceras, timeout=10)
-        datos_marina = req.json()
-    except Exception as e:
-        print(f"Error de conexión API Marina: {e}")
-        return ""
-        
-    # Si la API nos devuelve un solo bloque en vez de una lista, lo convertimos a lista
-    if isinstance(datos_marina, dict):
-        datos_marina = [datos_marina]
-        
+    print(f"\n[{comunidad}] 1. Calculando olas en paralelo...")
     resultados = []
-    for idx, spot in enumerate(lista_spots):
-        try:
-            datos_spot = datos_marina[idx]
-            mejor_ola_spot = 0.0
-            prevision_spot = []
-            
-            for i in range(hora_actual, hora_actual + 24):
-                ola = datos_spot["hourly"]["wave_height"][i]
-                if ola is None: ola = 0.0
-                if ola > mejor_ola_spot: mejor_ola_spot = ola
+    
+    # Lanzamos 10 hilos simultáneos a Open-Meteo. ¡Esto reduce el tiempo de 20s a 1s!
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futuros = [executor.submit(buscar_olas_spot, spot, cabeceras) for spot in lista_spots]
+        for futuro in concurrent.futures.as_completed(futuros):
+            res = futuro.result()
+            if res:
+                datos_mar = res["datos"]
+                spot = res["spot"]
+                mejor_ola_spot = 0.0
+                prevision_spot = []
+                
+                # ¡RECORTE DE DIETA! Solo miramos 15 horas para salvar la RAM del Arduino
+                for i in range(hora_actual, hora_actual + 15): 
+                    ola = datos_mar["hourly"]["wave_height"][i]
+                    if ola is None: ola = 0.0
+                    if ola > mejor_ola_spot: mejor_ola_spot = ola
                     
-                tiempo_crudo = datos_spot["hourly"]["time"][i]
-                dia = int(tiempo_crudo[8:10])
-                mes = int(tiempo_crudo[5:7])
-                dir_ola = grados_a_rosa(datos_spot["hourly"]["wave_direction"][i])
+                    tiempo_crudo = datos_mar["hourly"]["time"][i]
+                    dia = int(tiempo_crudo[8:10])
+                    mes = int(tiempo_crudo[5:7])
+                    dir_ola = grados_a_rosa(datos_mar["hourly"]["wave_direction"][i])
+                    
+                    temp = datos_mar["hourly"]["sea_surface_temperature"][i]
+                    temp_str = f"{temp:.1f}" if temp is not None else "--"
+                    
+                    periodo = datos_mar["hourly"]["wave_period"][i]
+                    periodo_str = f"{periodo:.1f}" if periodo is not None else "--"
+                    
+                    prevision_spot.append({
+                        "fecha": f"{dia}/{mes}", "hora": tiempo_crudo[11:16],
+                        "ola": f"{ola:.1f}", "periodo": periodo_str,
+                        "temp": temp_str, "dir_ola": dir_ola
+                    })
                 
-                temp = datos_spot["hourly"]["sea_surface_temperature"][i]
-                temp_str = f"{temp:.1f}" if temp is not None else "--"
-                
-                periodo = datos_spot["hourly"]["wave_period"][i]
-                periodo_str = f"{periodo:.1f}" if periodo is not None else "--"
-                
-                prevision_spot.append({
-                    "fecha": f"{dia}/{mes}", "hora": tiempo_crudo[11:16],
-                    "ola": f"{ola:.1f}", "periodo": periodo_str,
-                    "temp": temp_str, "dir_ola": dir_ola
+                resultados.append({
+                    "nombre": spot["nombre"], "lat": spot['lat'], "lon": spot['lon'],
+                    "max_ola": mejor_ola_spot, "prevision": prevision_spot
                 })
                 
-            resultados.append({
-                "nombre": spot["nombre"], "lat": spot['lat'], "lon": spot['lon'],
-                "max_ola": mejor_ola_spot, "prevision": prevision_spot
-            })
-        except:
-            pass
-            
-    # Ordenamos el Top 5
+    # Ordenamos y cogemos los 5 ganadores
     resultados.sort(key=lambda x: x["max_ola"], reverse=True)
     top_5 = resultados[:5]
     
-    print(f"[{comunidad}] 2. Buscando Viento en LOTE para el Top 5...")
+    print(f"[{comunidad}] 2. Buscando Viento en paralelo para el Top 5...")
+    vientos_data = {}
     
-    # Volvemos a juntar las latitudes, esta vez solo de las 5 ganadoras
-    lats_viento = ",".join([str(s['lat']) for s in top_5])
-    lons_viento = ",".join([str(s['lon']) for s in top_5])
-    
-    # ¡Otra PETICIÓN ÚNICA para el viento!
-    url_viento = f"https://api.open-meteo.com/v1/forecast?latitude={lats_viento}&longitude={lons_viento}&hourly=wind_speed_10m,wind_direction_10m&forecast_days=2&timezone=Europe/Berlin"
-    
-    try:
-        req_viento = requests.get(url_viento, headers=cabeceras, timeout=10).json()
-        if isinstance(req_viento, dict) and "hourly" in req_viento:
-            req_viento = [req_viento]
-    except:
-        req_viento = None
+    # Lanzamos 5 hilos simultáneos para el viento
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        futuros_v = [executor.submit(buscar_viento_spot, spot, cabeceras) for spot in top_5]
+        for f in concurrent.futures.as_completed(futuros_v):
+            res = f.result()
+            vientos_data[res["nombre"]] = res["datos"]
 
     csv_final = ""
     for index, spot in enumerate(top_5):
-        # Asignamos los vientos comprobando que la descarga fue bien
-        if req_viento and len(req_viento) > index and "hourly" in req_viento[index]:
-            viento_spot = req_viento[index]
-        else:
-            viento_spot = None
-            
+        viento_json = vientos_data.get(spot["nombre"])
+        
         for i, p in enumerate(spot['prevision']):
-            if viento_spot:
+            if viento_json:
                 idx_hora = hora_actual + i
-                vel_viento = viento_spot["hourly"]["wind_speed_10m"][idx_hora]
-                dir_viento_grados = viento_spot["hourly"]["wind_direction_10m"][idx_hora]
-                p['vel_viento'] = f"{vel_viento:.1f}" if vel_viento is not None else "--"
-                p['dir_viento'] = grados_a_rosa(dir_viento_grados)
+                vel = viento_json["hourly"]["wind_speed_10m"][idx_hora]
+                dir_v = viento_json["hourly"]["wind_direction_10m"][idx_hora]
+                p['vel_viento'] = f"{vel:.1f}" if vel is not None else "--"
+                p['dir_viento'] = grados_a_rosa(dir_v)
             else:
                 p['vel_viento'] = "--"
                 p['dir_viento'] = "--"
 
-        # Empaquetamos todo (8 variables exactas)
+        # Empaquetamos todo el CSV
         csv_final += f"{spot['nombre']}\n"
         for p in spot['prevision']:
             csv_final += f"{p['fecha']},{p['hora']},{p['ola']},{p['periodo']},{p['temp']},{p['dir_ola']},{p['vel_viento']},{p['dir_viento']}\n"
@@ -172,7 +168,7 @@ def calcular_top_5_comunidad(comunidad):
         if index < len(top_5) - 1:
             csv_final += "---\n" 
             
-    print(f"✅ ¡Datos calculados y listos en tiempo récord!")
+    print(f"✅ ¡Datos completados en tiempo récord!")
     return csv_final
 
 class Manejador(BaseHTTPRequestHandler):
@@ -188,6 +184,8 @@ class Manejador(BaseHTTPRequestHandler):
 
 if __name__ == '__main__':
     puerto = int(os.environ.get('PORT', 8080))
-    print(f"⚡ SERVIDOR ULTRARRÁPIDO INICIADO EN PUERTO {puerto} ⚡")
+    print("="*50)
+    print(f"⚡ SERVIDOR MULTIHILO INICIADO EN PUERTO {puerto} ⚡")
+    print("="*50)
     servidor = HTTPServer(('0.0.0.0', puerto), Manejador)
     servidor.serve_forever()
