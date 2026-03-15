@@ -2,173 +2,167 @@ import os
 import requests
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
+import time
 from datetime import datetime
-import concurrent.futures
 
 # --- SÚPER BASE DE DATOS DE SURF POR COMUNIDADES ---
 spots_db = {
     "Andalucia": [
-        {"nombre": "El Palmar", "lat": 36.236, "lon": -6.071}, {"nombre": "Tarifa", "lat": 36.013, "lon": -5.606},
-        {"nombre": "Yerbabuena", "lat": 36.183, "lon": -5.992}, {"nombre": "Cabopino", "lat": 36.488, "lon": -4.744},
-        {"nombre": "Punta Umbria", "lat": 37.178, "lon": -6.966}, {"nombre": "Los Bateles", "lat": 36.273, "lon": -6.089},
-        {"nombre": "Canos de Meca", "lat": 36.182, "lon": -6.011}, {"nombre": "Cortadura", "lat": 36.494, "lon": -6.265},
-        {"nombre": "Mazagon", "lat": 37.135, "lon": -6.822}, {"nombre": "Santa Amalia", "lat": 36.536, "lon": -4.618}
+        {"nombre": "El Palmar", "lat": 36.236, "lon": -6.071},
+        {"nombre": "Tarifa", "lat": 36.013, "lon": -5.606},
+        {"nombre": "Yerbabuena", "lat": 36.183, "lon": -5.992},
+        {"nombre": "Cabopino", "lat": 36.488, "lon": -4.744},
+        {"nombre": "Punta Umbria", "lat": 37.178, "lon": -6.966},
+        {"nombre": "Los Bateles", "lat": 36.273, "lon": -6.089},
+        {"nombre": "Canos de Meca", "lat": 36.182, "lon": -6.011},
+        {"nombre": "Cortadura", "lat": 36.494, "lon": -6.265},
+        {"nombre": "Mazagon", "lat": 37.135, "lon": -6.822},
+        {"nombre": "Santa Amalia", "lat": 36.536, "lon": -4.618}
     ],
     "Asturias": [
-        {"nombre": "Salinas", "lat": 43.578, "lon": -5.955}, {"nombre": "Rodiles", "lat": 43.533, "lon": -5.383},
-        {"nombre": "Xago", "lat": 43.611, "lon": -5.918}, {"nombre": "San Lorenzo", "lat": 43.543, "lon": -5.654},
-        {"nombre": "Playa Espana", "lat": 43.545, "lon": -5.597}, {"nombre": "Tapia", "lat": 43.571, "lon": -6.945},
-        {"nombre": "Penarronda", "lat": 43.554, "lon": -6.992}, {"nombre": "San Antolin", "lat": 43.438, "lon": -4.869},
-        {"nombre": "Vega", "lat": 43.486, "lon": -5.143}, {"nombre": "Frejulfe", "lat": 43.559, "lon": -6.658}
+        {"nombre": "Salinas", "lat": 43.578, "lon": -5.955},
+        {"nombre": "Rodiles", "lat": 43.533, "lon": -5.383},
+        {"nombre": "Xago", "lat": 43.611, "lon": -5.918},
+        {"nombre": "San Lorenzo", "lat": 43.543, "lon": -5.654},
+        {"nombre": "Playa Espana", "lat": 43.545, "lon": -5.597},
+        {"nombre": "Tapia", "lat": 43.571, "lon": -6.945},
+        {"nombre": "Penarronda", "lat": 43.554, "lon": -6.992},
+        {"nombre": "San Antolin", "lat": 43.438, "lon": -4.869},
+        {"nombre": "Vega", "lat": 43.486, "lon": -5.143},
+        {"nombre": "Frejulfe", "lat": 43.559, "lon": -6.658}
     ],
     "Canarias": [
-        {"nombre": "Famara", "lat": 29.116, "lon": -13.556}, {"nombre": "Las Americas", "lat": 28.058, "lon": -16.732},
-        {"nombre": "El Quemao", "lat": 29.117, "lon": -13.633}, {"nombre": "Los Lobos", "lat": 28.749, "lon": -13.818},
-        {"nombre": "El Confital", "lat": 28.163, "lon": -15.441}, {"nombre": "La Santa", "lat": 29.109, "lon": -13.651},
-        {"nombre": "El Socorro", "lat": 28.396, "lon": -16.602}, {"nombre": "Punta Blanca", "lat": 28.212, "lon": -16.836},
-        {"nombre": "Igueste", "lat": 28.536, "lon": -16.152}, {"nombre": "Bajamar", "lat": 28.556, "lon": -16.345}
+        {"nombre": "Famara", "lat": 29.116, "lon": -13.556},
+        {"nombre": "Las Americas", "lat": 28.058, "lon": -16.732},
+        {"nombre": "El Quemao", "lat": 29.117, "lon": -13.633},
+        {"nombre": "Los Lobos", "lat": 28.749, "lon": -13.818},
+        {"nombre": "El Confital", "lat": 28.163, "lon": -15.441},
+        {"nombre": "La Santa", "lat": 29.109, "lon": -13.651},
+        {"nombre": "El Socorro", "lat": 28.396, "lon": -16.602},
+        {"nombre": "Punta Blanca", "lat": 28.212, "lon": -16.836},
+        {"nombre": "Igueste", "lat": 28.536, "lon": -16.152},
+        {"nombre": "Bajamar", "lat": 28.556, "lon": -16.345}
     ],
     "Cantabria": [
-        {"nombre": "Somo", "lat": 43.454, "lon": -3.765}, {"nombre": "Los Locos", "lat": 43.435, "lon": -4.045},
-        {"nombre": "Laredo", "lat": 43.415, "lon": -3.432}, {"nombre": "Berria", "lat": 43.458, "lon": -3.468},
-        {"nombre": "Liencres", "lat": 43.468, "lon": -3.938}, {"nombre": "Meron", "lat": 43.391, "lon": -4.385},
-        {"nombre": "Santa Marina", "lat": 43.453, "lon": -3.738}, {"nombre": "Langre", "lat": 43.477, "lon": -3.702},
-        {"nombre": "Galizano", "lat": 43.481, "lon": -3.674}, {"nombre": "Suances", "lat": 43.437, "lon": -4.038}
+        {"nombre": "Somo", "lat": 43.454, "lon": -3.765},
+        {"nombre": "Los Locos", "lat": 43.435, "lon": -4.045},
+        {"nombre": "Laredo", "lat": 43.415, "lon": -3.432},
+        {"nombre": "Berria", "lat": 43.458, "lon": -3.468},
+        {"nombre": "Liencres", "lat": 43.468, "lon": -3.938},
+        {"nombre": "Meron", "lat": 43.391, "lon": -4.385},
+        {"nombre": "Santa Marina", "lat": 43.453, "lon": -3.738},
+        {"nombre": "Langre", "lat": 43.477, "lon": -3.702},
+        {"nombre": "Galizano", "lat": 43.481, "lon": -3.674},
+        {"nombre": "Suances", "lat": 43.437, "lon": -4.038}
     ],
     "Cataluna": [
-        {"nombre": "Barceloneta", "lat": 41.378, "lon": 2.192}, {"nombre": "Sitges", "lat": 41.233, "lon": 1.804},
-        {"nombre": "Masnou", "lat": 41.478, "lon": 2.313}, {"nombre": "Montgat", "lat": 41.464, "lon": 2.279},
-        {"nombre": "Castelldefels", "lat": 41.264, "lon": 1.993}, {"nombre": "Premia de Mar", "lat": 41.491, "lon": 2.359},
-        {"nombre": "Bogatell", "lat": 41.393, "lon": 2.207}, {"nombre": "Garraf", "lat": 41.253, "lon": 1.901},
-        {"nombre": "Rio Besos", "lat": 41.417, "lon": 2.232}, {"nombre": "Blanes", "lat": 41.673, "lon": 2.795}
+        {"nombre": "Barceloneta", "lat": 41.378, "lon": 2.192},
+        {"nombre": "Sitges", "lat": 41.233, "lon": 1.804},
+        {"nombre": "Masnou", "lat": 41.478, "lon": 2.313},
+        {"nombre": "Montgat", "lat": 41.464, "lon": 2.279},
+        {"nombre": "Castelldefels", "lat": 41.264, "lon": 1.993},
+        {"nombre": "Premia de Mar", "lat": 41.491, "lon": 2.359},
+        {"nombre": "Bogatell", "lat": 41.393, "lon": 2.207},
+        {"nombre": "Garraf", "lat": 41.253, "lon": 1.901},
+        {"nombre": "Rio Besos", "lat": 41.417, "lon": 2.232},
+        {"nombre": "Blanes", "lat": 41.673, "lon": 2.795}
     ],
     "Galicia": [
-        {"nombre": "Razo", "lat": 43.292, "lon": -8.705}, {"nombre": "Pantin", "lat": 43.638, "lon": -8.109},
-        {"nombre": "Doninos", "lat": 43.498, "lon": -8.318}, {"nombre": "A Lanzada", "lat": 42.433, "lon": -8.878},
-        {"nombre": "Patos", "lat": 42.146, "lon": -8.824}, {"nombre": "Nemina", "lat": 43.013, "lon": -9.231},
-        {"nombre": "Sabon", "lat": 43.328, "lon": -8.504}, {"nombre": "Bastiagueiro", "lat": 43.344, "lon": -8.349},
-        {"nombre": "Soesto", "lat": 43.208, "lon": -9.022}, {"nombre": "Rio Sieira", "lat": 42.648, "lon": -9.034}
+        {"nombre": "Razo", "lat": 43.292, "lon": -8.705},
+        {"nombre": "Pantin", "lat": 43.638, "lon": -8.109},
+        {"nombre": "Doninos", "lat": 43.498, "lon": -8.318},
+        {"nombre": "A Lanzada", "lat": 42.433, "lon": -8.878},
+        {"nombre": "Patos", "lat": 42.146, "lon": -8.824},
+        {"nombre": "Nemina", "lat": 43.013, "lon": -9.231},
+        {"nombre": "Sabon", "lat": 43.328, "lon": -8.504},
+        {"nombre": "Bastiagueiro", "lat": 43.344, "lon": -8.349},
+        {"nombre": "Soesto", "lat": 43.208, "lon": -9.022},
+        {"nombre": "Rio Sieira", "lat": 42.648, "lon": -9.034}
     ],
     "Pais_Vasco": [
-        {"nombre": "Mundaka", "lat": 43.407, "lon": -2.697}, {"nombre": "Zarautz", "lat": 43.285, "lon": -2.164},
-        {"nombre": "Sopelana", "lat": 43.388, "lon": -2.996}, {"nombre": "Bakio", "lat": 43.428, "lon": -2.808},
-        {"nombre": "Zurriola", "lat": 43.326, "lon": -1.975}, {"nombre": "Menakoz", "lat": 43.395, "lon": -2.984},
-        {"nombre": "Laga", "lat": 43.411, "lon": -2.651}, {"nombre": "Karraspio", "lat": 43.366, "lon": -2.497},
-        {"nombre": "Orrua", "lat": 43.303, "lon": -2.224}, {"nombre": "Playa Gris", "lat": 43.305, "lon": -2.235}
+        {"nombre": "Mundaka", "lat": 43.407, "lon": -2.697},
+        {"nombre": "Zarautz", "lat": 43.285, "lon": -2.164},
+        {"nombre": "Sopelana", "lat": 43.388, "lon": -2.996},
+        {"nombre": "Bakio", "lat": 43.428, "lon": -2.808},
+        {"nombre": "Zurriola", "lat": 43.326, "lon": -1.975},
+        {"nombre": "Menakoz", "lat": 43.395, "lon": -2.984},
+        {"nombre": "Laga", "lat": 43.411, "lon": -2.651},
+        {"nombre": "Karraspio", "lat": 43.366, "lon": -2.497},
+        {"nombre": "Orrua", "lat": 43.303, "lon": -2.224},
+        {"nombre": "Playa Gris", "lat": 43.305, "lon": -2.235}
     ]
 }
 
-def grados_a_rosa(grados):
-    if grados is None: return "--"
-    direcciones = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW", "N"]
-    return direcciones[int(round(grados / 22.5)) % 16]
-
-# Herramienta para buscar datos de una playa (se ejecuta en paralelo)
-def buscar_olas_spot(spot, cabeceras):
-    url = f"https://marine-api.open-meteo.com/v1/marine?latitude={spot['lat']}&longitude={spot['lon']}&hourly=wave_height,wave_period,sea_surface_temperature,wave_direction&forecast_days=2&timezone=Europe/Berlin"
-    try:
-        req = requests.get(url, headers=cabeceras, timeout=5)
-        if req.status_code == 200:
-            return {"spot": spot, "datos": req.json()}
-    except:
-        pass
-    return None
-
-def buscar_viento_spot(spot, cabeceras):
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={spot['lat']}&longitude={spot['lon']}&hourly=wind_speed_10m,wind_direction_10m&forecast_days=2&timezone=Europe/Berlin"
-    try:
-        req = requests.get(url, headers=cabeceras, timeout=5)
-        if req.status_code == 200:
-            return {"nombre": spot["nombre"], "datos": req.json()}
-    except:
-        pass
-    return {"nombre": spot["nombre"], "datos": None}
-
 def calcular_top_5_comunidad(comunidad):
     hora_actual = datetime.now().hour
-    lista_spots = spots_db.get(comunidad, spots_db["Cantabria"])
-    cabeceras = {'User-Agent': 'Mozilla/5.0'}
-    
-    print(f"\n[{comunidad}] 1. Calculando olas en paralelo...")
     resultados = []
+    lista_spots = spots_db.get(comunidad, spots_db["Cantabria"])
     
-    # Lanzamos 10 hilos simultáneos a Open-Meteo. ¡Esto reduce el tiempo de 20s a 1s!
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        futuros = [executor.submit(buscar_olas_spot, spot, cabeceras) for spot in lista_spots]
-        for futuro in concurrent.futures.as_completed(futuros):
-            res = futuro.result()
-            if res:
-                datos_mar = res["datos"]
-                spot = res["spot"]
-                mejor_ola_spot = 0.0
-                prevision_spot = []
+    print(f"\n[{comunidad}] Calculando el Top 5 Estable (Altura, Periodo, Temp)...")
+    
+    cabeceras = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    }
+    
+    for spot in lista_spots:
+        # Solo pedimos los 3 datos fundamentales
+        url = f"https://marine-api.open-meteo.com/v1/marine?latitude={spot['lat']}&longitude={spot['lon']}&hourly=wave_height,wave_period,sea_surface_temperature&forecast_days=2&timezone=Europe/Berlin"
+        
+        try:
+            req = requests.get(url, headers=cabeceras, timeout=5)
+            if req.status_code != 200: continue
+            
+            respuesta = req.json()
+            mejor_ola_spot = 0.0
+            prevision_spot = []
+            
+            for i in range(hora_actual, hora_actual + 24):
+                ola = respuesta["hourly"]["wave_height"][i]
+                if ola is None: ola = 0.0
+                if ola > mejor_ola_spot:
+                    mejor_ola_spot = ola
+                    
+                tiempo_crudo = respuesta["hourly"]["time"][i]
+                dia = int(tiempo_crudo[8:10])
+                mes = int(tiempo_crudo[5:7])
                 
-                # ¡RECORTE DE DIETA! Solo miramos 15 horas para salvar la RAM del Arduino
-                for i in range(hora_actual, hora_actual + 15): 
-                    ola = datos_mar["hourly"]["wave_height"][i]
-                    if ola is None: ola = 0.0
-                    if ola > mejor_ola_spot: mejor_ola_spot = ola
-                    
-                    tiempo_crudo = datos_mar["hourly"]["time"][i]
-                    dia = int(tiempo_crudo[8:10])
-                    mes = int(tiempo_crudo[5:7])
-                    dir_ola = grados_a_rosa(datos_mar["hourly"]["wave_direction"][i])
-                    
-                    temp = datos_mar["hourly"]["sea_surface_temperature"][i]
-                    temp_str = f"{temp:.1f}" if temp is not None else "--"
-                    
-                    periodo = datos_mar["hourly"]["wave_period"][i]
-                    periodo_str = f"{periodo:.1f}" if periodo is not None else "--"
-                    
-                    prevision_spot.append({
-                        "fecha": f"{dia}/{mes}", "hora": tiempo_crudo[11:16],
-                        "ola": f"{ola:.1f}", "periodo": periodo_str,
-                        "temp": temp_str, "dir_ola": dir_ola
-                    })
+                temp = respuesta["hourly"]["sea_surface_temperature"][i]
+                temp_str = f"{temp:.1f}" if temp is not None else "--"
                 
-                resultados.append({
-                    "nombre": spot["nombre"], "lat": spot['lat'], "lon": spot['lon'],
-                    "max_ola": mejor_ola_spot, "prevision": prevision_spot
+                periodo = respuesta["hourly"]["wave_period"][i]
+                periodo_str = f"{periodo:.1f}" if periodo is not None else "--"
+                
+                prevision_spot.append({
+                    "fecha": f"{dia}/{mes}",
+                    "hora": tiempo_crudo[11:16],
+                    "ola": f"{ola:.1f}",
+                    "periodo": periodo_str,
+                    "temp": temp_str
                 })
                 
-    # Ordenamos y cogemos los 5 ganadores
+            resultados.append({
+                "nombre": spot["nombre"],
+                "max_ola": mejor_ola_spot,
+                "prevision": prevision_spot
+            })
+            
+        except Exception as e:
+            print(f"  -> Error con {spot['nombre']}. Saltando.")
+            pass
+        
     resultados.sort(key=lambda x: x["max_ola"], reverse=True)
     top_5 = resultados[:5]
     
-    print(f"[{comunidad}] 2. Buscando Viento en paralelo para el Top 5...")
-    vientos_data = {}
-    
-    # Lanzamos 5 hilos simultáneos para el viento
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        futuros_v = [executor.submit(buscar_viento_spot, spot, cabeceras) for spot in top_5]
-        for f in concurrent.futures.as_completed(futuros_v):
-            res = f.result()
-            vientos_data[res["nombre"]] = res["datos"]
-
     csv_final = ""
     for index, spot in enumerate(top_5):
-        viento_json = vientos_data.get(spot["nombre"])
-        
-        for i, p in enumerate(spot['prevision']):
-            if viento_json:
-                idx_hora = hora_actual + i
-                vel = viento_json["hourly"]["wind_speed_10m"][idx_hora]
-                dir_v = viento_json["hourly"]["wind_direction_10m"][idx_hora]
-                p['vel_viento'] = f"{vel:.1f}" if vel is not None else "--"
-                p['dir_viento'] = grados_a_rosa(dir_v)
-            else:
-                p['vel_viento'] = "--"
-                p['dir_viento'] = "--"
-
-        # Empaquetamos todo el CSV
         csv_final += f"{spot['nombre']}\n"
         for p in spot['prevision']:
-            csv_final += f"{p['fecha']},{p['hora']},{p['ola']},{p['periodo']},{p['temp']},{p['dir_ola']},{p['vel_viento']},{p['dir_viento']}\n"
-        
+            # Enviamos 5 datos por línea: fecha, hora, ola, periodo, temp
+            csv_final += f"{p['fecha']},{p['hora']},{p['ola']},{p['periodo']},{p['temp']}\n"
         if index < len(top_5) - 1:
             csv_final += "---\n" 
             
-    print(f"✅ ¡Datos completados en tiempo récord!")
+    print(f"✅ Top 5 calculado y enviado.")
     return csv_final
 
 class Manejador(BaseHTTPRequestHandler):
@@ -176,7 +170,10 @@ class Manejador(BaseHTTPRequestHandler):
         parsed_path = urlparse(self.path)
         query = parse_qs(parsed_path.query)
         region = query.get('region', ['Cantabria'])[0] 
+        
+        print(f"\n--> Arduino solicita: {region}")
         csv_data = calcular_top_5_comunidad(region)
+        
         self.send_response(200)
         self.send_header('Content-type', 'text/plain')
         self.end_headers()
@@ -185,7 +182,7 @@ class Manejador(BaseHTTPRequestHandler):
 if __name__ == '__main__':
     puerto = int(os.environ.get('PORT', 8080))
     print("="*50)
-    print(f"⚡ SERVIDOR MULTIHILO INICIADO EN PUERTO {puerto} ⚡")
+    print(f"🌍 SERVIDOR ESTABLE INICIADO EN PUERTO {puerto}")
     print("="*50)
     servidor = HTTPServer(('0.0.0.0', puerto), Manejador)
     servidor.serve_forever()
