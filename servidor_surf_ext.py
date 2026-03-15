@@ -2,7 +2,6 @@ import os
 import requests
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
-import socket
 import time
 from datetime import datetime
 
@@ -93,7 +92,7 @@ spots_db = {
         {"nombre": "Playa Gris", "lat": 43.305, "lon": -2.235}
     ]
 }
-# Función para convertir grados (0-360) a puntos cardinales (N, NW, SE...)
+
 def grados_a_rosa(grados):
     if grados is None: return "--"
     direcciones = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW", "N"]
@@ -104,58 +103,77 @@ def calcular_top_5_comunidad(comunidad):
     hora_actual = datetime.now().hour
     resultados = []
     lista_spots = spots_db.get(comunidad, spots_db["Cantabria"])
-    print(f"\n[{comunidad}] Calculando el Top 5 para las próximas 24h...")
+    
+    print(f"\n[{comunidad}] Calculando el Top 5...")
     
     for spot in lista_spots:
-        # AÑADIMOS 'wave_direction' Y 'sea_level' A LA URL
-        url = f"https://marine-api.open-meteo.com/v1/marine?latitude={spot['lat']}&longitude={spot['lon']}&hourly=wave_height,wave_period,sea_surface_temperature,wave_direction,sea_level&forecast_days=2&timezone=Europe/Berlin"
-        exito = False
-        intentos = 0
+        # URL 1: Intentamos conseguir absolutamente todo (Mareas incluidas)
+        url_completa = f"https://marine-api.open-meteo.com/v1/marine?latitude={spot['lat']}&longitude={spot['lon']}&hourly=wave_height,wave_period,sea_surface_temperature,wave_direction,sea_level&forecast_days=2&timezone=Europe/Berlin"
         
-        while not exito and intentos < 3:
-            try:
-                respuesta = requests.get(url, timeout=5).json()
-                mejor_ola_spot = 0.0
-                prevision_spot = []
+        # URL 2: El Plan B por si esta playa no tiene boyas de marea
+        url_segura = f"https://marine-api.open-meteo.com/v1/marine?latitude={spot['lat']}&longitude={spot['lon']}&hourly=wave_height,wave_period,sea_surface_temperature,wave_direction&forecast_days=2&timezone=Europe/Berlin"
+        
+        try:
+            # Pedimos los datos y cruzamos los dedos
+            req = requests.get(url_completa, timeout=3)
+            respuesta_json = {}
+            
+            # ¡Si Open-Meteo se enfada por la marea, activamos el Plan B!
+            if req.status_code != 200:
+                print(f"⚠️ Playa {spot['nombre']} sin datos de marea. Usando Plan B...")
+                req_b = requests.get(url_segura, timeout=3)
+                if req_b.status_code == 200:
+                    respuesta_json = req_b.json()
+                else:
+                    continue # Si falla hasta el Plan B, saltamos a la siguiente playa
+            else:
+                respuesta_json = req.json()
+
+            # --- PROCESAMOS LOS DATOS ---
+            mejor_ola_spot = 0.0
+            prevision_spot = []
+            
+            for i in range(hora_actual, hora_actual + 24):
+                ola = respuesta_json["hourly"]["wave_height"][i]
+                if ola is None: ola = 0.0 # Por si la API devuelve un vacío
+                if ola > mejor_ola_spot:
+                    mejor_ola_spot = ola
+                    
+                tiempo_crudo = respuesta_json["hourly"]["time"][i]
+                dia = int(tiempo_crudo[8:10])
+                mes = int(tiempo_crudo[5:7])
                 
-                for i in range(hora_actual, hora_actual + 24):
-                    ola = respuesta["hourly"]["wave_height"][i]
-                    if ola > mejor_ola_spot:
-                        mejor_ola_spot = ola
-                        
-                    tiempo_crudo = respuesta["hourly"]["time"][i]
-                    dia = int(tiempo_crudo[8:10])
-                    mes = int(tiempo_crudo[5:7])
-                    
-                    # Leemos los nuevos datos y los convertimos
-                    dir_grados = respuesta["hourly"]["wave_direction"][i]
-                    dir_texto = grados_a_rosa(dir_grados)
-                    marea = respuesta["hourly"]["sea_level"][i]
-                    
-                    prevision_spot.append({
-                        "fecha": f"{dia}/{mes}",
-                        "hora": tiempo_crudo[11:16],
-                        "ola": ola,
-                        "periodo": respuesta["hourly"]["wave_period"][i],
-                        "temp": respuesta["hourly"]["sea_surface_temperature"][i],
-                        "direccion": dir_texto, # Nuevo
-                        "marea": marea          # Nuevo
-                    })
-                    
-                resultados.append({
-                    "nombre": spot["nombre"],
-                    "max_ola": mejor_ola_spot,
-                    "prevision": prevision_spot
+                # Leemos la dirección con seguridad
+                dir_grados = respuesta_json["hourly"]["wave_direction"][i]
+                dir_texto = grados_a_rosa(dir_grados)
+                
+                # Leemos la marea (o ponemos "--" si tuvimos que usar el Plan B)
+                marea = "--"
+                if "sea_level" in respuesta_json["hourly"]:
+                    dato_marea = respuesta_json["hourly"]["sea_level"][i]
+                    if dato_marea is not None:
+                        marea = f"{dato_marea:.2f}"
+                
+                prevision_spot.append({
+                    "fecha": f"{dia}/{mes}",
+                    "hora": tiempo_crudo[11:16],
+                    "ola": ola,
+                    "periodo": respuesta_json["hourly"]["wave_period"][i],
+                    "temp": respuesta_json["hourly"]["sea_surface_temperature"][i],
+                    "direccion": dir_texto,
+                    "marea": marea
                 })
-                exito = True
                 
-            except Exception as e:
-                intentos += 1
-                print(f"  -> Error leyendo {spot['nombre']} (Intento {intentos}/3). Reintentando...")
-                time.sleep(1)
-                
-        time.sleep(0.2)
-        
+            resultados.append({
+                "nombre": spot["nombre"],
+                "max_ola": mejor_ola_spot,
+                "prevision": prevision_spot
+            })
+            
+        except Exception as e:
+            print(f"  -> Timeout en {spot['nombre']}. Saltando.")
+            
+    # Ordenar y coger el Top 5
     resultados.sort(key=lambda x: x["max_ola"], reverse=True)
     top_5 = resultados[:5]
     
@@ -163,12 +181,11 @@ def calcular_top_5_comunidad(comunidad):
     for index, spot in enumerate(top_5):
         csv_final += f"{spot['nombre']}\n"
         for p in spot['prevision']:
-            # AÑADIMOS LAS NUEVAS VARIABLES AL MENSAJE QUE VA AL ARDUINO
             csv_final += f"{p['fecha']},{p['hora']},{p['ola']},{p['periodo']},{p['temp']},{p['direccion']},{p['marea']}\n"
         if index < len(top_5) - 1:
             csv_final += "---\n" 
             
-    print(f"Top 5 calculado y enviado.")
+    print(f"✅ Top 5 calculado con éxito.")
     return csv_final
 
 class Manejador(BaseHTTPRequestHandler):
@@ -177,7 +194,7 @@ class Manejador(BaseHTTPRequestHandler):
         query = parse_qs(parsed_path.query)
         region = query.get('region', ['Cantabria'])[0] 
         
-        print(f"\n--> Arduino ha solicitado datos de: {region}")
+        print(f"\n--> Petición recibida: {region}")
         csv_data = calcular_top_5_comunidad(region)
         
         self.send_response(200)
@@ -186,13 +203,9 @@ class Manejador(BaseHTTPRequestHandler):
         self.wfile.write(csv_data.encode('utf-8'))
 
 if __name__ == '__main__':
-    # Render nos asignará un puerto automáticamente en la variable de entorno 'PORT'. 
-    # Si lo ejecutas en tu Mac, usará el 8080 por defecto.
     puerto = int(os.environ.get('PORT', 8080))
-    
     print("="*50)
-    print(f"🌍 SERVIDOR DE SURF EN LA NUBE INICIADO EN PUERTO {puerto}")
+    print(f"🌍 SERVIDOR ANTI-BALAS INICIADO EN PUERTO {puerto}")
     print("="*50)
-    
     servidor = HTTPServer(('0.0.0.0', puerto), Manejador)
     servidor.serve_forever()
